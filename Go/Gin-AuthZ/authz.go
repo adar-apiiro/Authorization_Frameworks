@@ -1,55 +1,41 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
-// Use of this source code is governed by a MIT style
-// license that can be found in the LICENSE file.
-
-package authz
+package main
 
 import (
 	"net/http"
 
 	"github.com/casbin/casbin/v2"
+	"github.com/gin-contrib/authz"
 	"github.com/gin-gonic/gin"
 )
 
-// NewAuthorizer returns the authorizer, uses a Casbin enforcer as input
-func NewAuthorizer(e *casbin.Enforcer) gin.HandlerFunc {
-	a := &BasicAuthorizer{enforcer: e}
+func main() {
+	// load the casbin model and policy from files, database is also supported.
+	e := casbin.NewEnforcer("authz_model.conf", "authz_policy.csv")
 
-	return func(c *gin.Context) {
-		if !a.CheckPermission(c.Request) {
-			a.RequirePermission(c)
-		}
-	}
-}
+	// define your router, and use the Casbin authz middleware.
+	// the access that is denied by authz will return HTTP 403 error.
+	router := gin.New()
+	router.Use(authz.NewAuthorizer(e))
 
-// BasicAuthorizer stores the casbin handler
-type BasicAuthorizer struct {
-	enforcer *casbin.Enforcer
-}
+	// Define a route with authorization middleware
+	router.GET("/dataset1/resource1", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Access Granted for GET on /dataset1/resource1"})
+	})
 
-// GetUserName gets the user name from the request.
-// Currently, only HTTP basic authentication is supported
-func (a *BasicAuthorizer) GetUserName(r *http.Request) string {
-	username, _, _ := r.BasicAuth()
-	return username
-}
+	// Define a route with specific permissions required
+	router.GET("/dataset1/resource2", authz.Authorize("alice"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Access Granted for GET on /dataset1/resource2"})
+	})
 
-// CheckPermission checks the user/method/path combination from the request.
-// Returns true (permission granted) or false (permission forbidden)
-func (a *BasicAuthorizer) CheckPermission(r *http.Request) bool {
-	user := a.GetUserName(r)
-	method := r.Method
-	path := r.URL.Path
+	// Define a route with a custom unauthorized handler
+	router.GET("/dataset2/resource1", authz.Authorize("bob"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Access Granted for GET on /dataset2/resource1"})
+	})
 
-	allowed, err := a.enforcer.Enforce(user, path, method)
-	if err != nil {
-		panic(err)
-	}
+	// Define a route with a custom unauthorized handler
+	router.GET("/dataset2/resource2", authz.Authorize("cathy"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Access Granted for GET on /dataset2/resource2"})
+	})
 
-	return allowed
-}
-
-// RequirePermission returns the 403 Forbidden to the client
-func (a *BasicAuthorizer) RequirePermission(c *gin.Context) {
-	c.AbortWithStatus(http.StatusForbidden)
+	router.Run(":8080")
 }
